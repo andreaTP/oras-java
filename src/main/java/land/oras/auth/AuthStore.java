@@ -109,7 +109,7 @@ public class AuthStore {
     /**
      * Creates a new FileStore from default location.
      * If the {@code REGISTRY_AUTH_FILE} environment variable is set it is used exclusively.
-     * Otherwise, the Docker config and (when {@code XDG_RUNTIME_DIR} is set) the Podman auth file are searched.
+     * Otherwise, the Docker config and the Podman auth files are searched.
      *
      * @return FileStore instance.
      */
@@ -123,19 +123,39 @@ public class AuthStore {
     }
 
     /**
-     * Returns the ordered list of auth file paths to search when no {@code REGISTRY_AUTH_FILE} is set.
-     * Docker config is always included; the Podman auth file is added when {@code XDG_RUNTIME_DIR} is set.
+     * Returns the ordered list of auth file paths to search when no {@code REGISTRY_AUTH_FILE} is set:
+     * the Docker config, the Podman config home auth file and, when {@code XDG_RUNTIME_DIR} is set,
+     * the Podman runtime auth file. Later files take precedence over earlier ones.
      *
      * @return list of candidate paths.
      */
     private static List<Path> defaultAuthPaths() {
-        Path dockerPath = Path.of(System.getProperty("user.home"), ".docker", "config.json");
+        List<Path> paths = new ArrayList<>();
+        paths.add(dockerConfigDir().resolve("config.json"));
+        // https://github.com/containers/image/blob/main/pkg/docker/config/config.go
+        paths.add(xdgConfigHome().resolve("containers").resolve("auth.json"));
         String xdgRuntimeDir = System.getenv("XDG_RUNTIME_DIR");
         if (xdgRuntimeDir != null) {
             // https://docs.podman.io/en/stable/markdown/podman-login.1.html#description
-            return List.of(dockerPath, Path.of(xdgRuntimeDir, "containers", "auth.json"));
+            paths.add(Path.of(xdgRuntimeDir, "containers", "auth.json"));
         }
-        return List.of(dockerPath);
+        return paths;
+    }
+
+    private static Path dockerConfigDir() {
+        String dockerConfig = System.getenv("DOCKER_CONFIG");
+        if (dockerConfig != null && !dockerConfig.isEmpty()) {
+            return Path.of(dockerConfig);
+        }
+        return Path.of(System.getProperty("user.home"), ".docker");
+    }
+
+    private static Path xdgConfigHome() {
+        String xdgConfigHome = System.getenv("XDG_CONFIG_HOME");
+        if (xdgConfigHome != null && !xdgConfigHome.isEmpty()) {
+            return Path.of(xdgConfigHome);
+        }
+        return Path.of(System.getProperty("user.home"), ".config");
     }
 
     /**
