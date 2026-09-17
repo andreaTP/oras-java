@@ -51,6 +51,15 @@ class AuthStoreTest {
     @TempDir
     private static Path xdgRuntimeDir;
 
+    @TempDir
+    private static Path xdgConfigHome;
+
+    @TempDir
+    private static Path podmanHomeDir;
+
+    @TempDir
+    private static Path dockerConfigDir;
+
     private AuthStore authStore;
     private AuthStore.Config mockConfig;
     private AuthStore.Credential mockCredential;
@@ -110,6 +119,18 @@ class AuthStoreTest {
         Files.createDirectory(xdgRuntimeDir.resolve("containers"));
         Files.writeString(xdgRuntimeDir.resolve("containers").resolve("auth.json"), SAMPLE_PODMAN_CONFIG);
 
+        // Write a sample Podman config file in the XDG config home
+        Files.createDirectory(xdgConfigHome.resolve("containers"));
+        Files.writeString(xdgConfigHome.resolve("containers").resolve("auth.json"), SAMPLE_PODMAN_CONFIG);
+
+        // Write a sample Podman config file below a home directory, as podman does on macOS
+        Files.createDirectories(podmanHomeDir.resolve(".config").resolve("containers"));
+        Files.writeString(
+                podmanHomeDir.resolve(".config").resolve("containers").resolve("auth.json"), SAMPLE_PODMAN_CONFIG);
+
+        // Write a sample Docker config file in a DOCKER_CONFIG directory
+        Files.writeString(dockerConfigDir.resolve("config.json"), SAMPLE_DOCKER_CONFIG);
+
         Path helper = Path.of("docker-credential-fake");
         String newPath =
                 helper.toAbsolutePath().getParent() + System.getProperty("path.separator") + System.getenv("PATH");
@@ -129,6 +150,8 @@ class AuthStoreTest {
         new EnvironmentVariables()
                 .set("XDG_RUNTIME_DIR", "not-used")
                 .remove("REGISTRY_AUTH_FILE")
+                .remove("XDG_CONFIG_HOME")
+                .remove("DOCKER_CONFIG")
                 .execute(() -> {
                     new SystemProperties("user.home", homeDir.toAbsolutePath().toString()).execute(() -> {
                         assertNotNull(System.getenv("XDG_RUNTIME_DIR"));
@@ -148,6 +171,8 @@ class AuthStoreTest {
         new EnvironmentVariables()
                 .set("XDG_RUNTIME_DIR", "not-used")
                 .remove("REGISTRY_AUTH_FILE")
+                .remove("XDG_CONFIG_HOME")
+                .remove("DOCKER_CONFIG")
                 .execute(() -> {
                     new SystemProperties("user.home", homeDir.toAbsolutePath().toString()).execute(() -> {
                         assertNotNull(System.getenv("XDG_RUNTIME_DIR"));
@@ -180,6 +205,8 @@ class AuthStoreTest {
                 .set("XDG_RUNTIME_DIR", "not-used")
                 .set("PATH", newPath)
                 .remove("REGISTRY_AUTH_FILE")
+                .remove("XDG_CONFIG_HOME")
+                .remove("DOCKER_CONFIG")
                 .execute(() -> {
                     new SystemProperties("user.home", homeDir.toAbsolutePath().toString()).execute(() -> {
                         assertNotNull(System.getenv("XDG_RUNTIME_DIR"));
@@ -212,6 +239,8 @@ class AuthStoreTest {
                 .set("XDG_RUNTIME_DIR", "not-used")
                 .set("PATH", newPath)
                 .remove("REGISTRY_AUTH_FILE")
+                .remove("XDG_CONFIG_HOME")
+                .remove("DOCKER_CONFIG")
                 .execute(() -> {
                     new SystemProperties("user.home", homeDir.toAbsolutePath().toString()).execute(() -> {
                         assertNotNull(System.getenv("XDG_RUNTIME_DIR"));
@@ -231,6 +260,8 @@ class AuthStoreTest {
         new EnvironmentVariables()
                 .set("XDG_RUNTIME_DIR", "not-used")
                 .remove("REGISTRY_AUTH_FILE")
+                .remove("XDG_CONFIG_HOME")
+                .remove("DOCKER_CONFIG")
                 .execute(() -> {
                     new SystemProperties("user.home", homeDir.toAbsolutePath().toString()).execute(() -> {
                         assertNotNull(System.getenv("XDG_RUNTIME_DIR"));
@@ -262,6 +293,8 @@ class AuthStoreTest {
         new EnvironmentVariables()
                 .set("XDG_RUNTIME_DIR", xdgRuntimeDir.toAbsolutePath().toString())
                 .remove("REGISTRY_AUTH_FILE")
+                .remove("XDG_CONFIG_HOME")
+                .remove("DOCKER_CONFIG")
                 .execute(() -> {
                     new SystemProperties("user.home", "not-used").execute(() -> {
                         assertNotNull(System.getenv("XDG_RUNTIME_DIR"));
@@ -368,10 +401,77 @@ class AuthStoreTest {
     }
 
     @Test
+    void testShouldReadCredentialsFromPodmanConfigHome() throws Exception {
+        new EnvironmentVariables()
+                .set("XDG_CONFIG_HOME", xdgConfigHome.toAbsolutePath().toString())
+                .remove("XDG_RUNTIME_DIR")
+                .remove("REGISTRY_AUTH_FILE")
+                .remove("DOCKER_CONFIG")
+                .execute(() -> {
+                    new SystemProperties("user.home", "not-used").execute(() -> {
+                        AuthStore authStoreInstance = AuthStore.newStore();
+                        assertNotNull(authStoreInstance);
+
+                        AuthStore.Credential credential =
+                                authStoreInstance.get(ContainerRef.parse("registry.other.com/foo/bar:latest"));
+                        assertNotNull(credential);
+                        assertEquals(USERNAME, credential.username());
+                        assertEquals(PASSWORD, credential.password());
+                    });
+                });
+    }
+
+    @Test
+    void testShouldReadCredentialsFromPodmanConfigHomeViaUserHome() throws Exception {
+        new EnvironmentVariables()
+                .remove("XDG_CONFIG_HOME")
+                .remove("XDG_RUNTIME_DIR")
+                .remove("REGISTRY_AUTH_FILE")
+                .remove("DOCKER_CONFIG")
+                .execute(() -> {
+                    new SystemProperties(
+                                    "user.home", podmanHomeDir.toAbsolutePath().toString())
+                            .execute(() -> {
+                                AuthStore authStoreInstance = AuthStore.newStore();
+                                assertNotNull(authStoreInstance);
+
+                                AuthStore.Credential credential =
+                                        authStoreInstance.get(ContainerRef.parse("registry.other.com/foo/bar:latest"));
+                                assertNotNull(credential);
+                                assertEquals(USERNAME, credential.username());
+                                assertEquals(PASSWORD, credential.password());
+                            });
+                });
+    }
+
+    @Test
+    void testDockerConfigEnvOverridesUserHome() throws Exception {
+        new EnvironmentVariables()
+                .set("DOCKER_CONFIG", dockerConfigDir.toAbsolutePath().toString())
+                .remove("XDG_CONFIG_HOME")
+                .remove("XDG_RUNTIME_DIR")
+                .remove("REGISTRY_AUTH_FILE")
+                .execute(() -> {
+                    new SystemProperties("user.home", "not-used").execute(() -> {
+                        AuthStore authStoreInstance = AuthStore.newStore();
+                        assertNotNull(authStoreInstance);
+
+                        AuthStore.Credential credential =
+                                authStoreInstance.get(ContainerRef.parse("registry.example.com/foo/bar:latest"));
+                        assertNotNull(credential);
+                        assertEquals(USERNAME, credential.username());
+                        assertEquals(PASSWORD, credential.password());
+                    });
+                });
+    }
+
+    @Test
     void testWithoutXdgRuntimeDir() throws Exception {
         new EnvironmentVariables()
                 .remove("XDG_RUNTIME_DIR")
                 .remove("REGISTRY_AUTH_FILE")
+                .remove("XDG_CONFIG_HOME")
+                .remove("DOCKER_CONFIG")
                 .execute(() -> {
                     assertNull(System.getenv("XDG_RUNTIME_DIR"));
                     AuthStore authStoreInstance = AuthStore.newStore();
@@ -387,6 +487,8 @@ class AuthStoreTest {
         new EnvironmentVariables()
                 .set("REGISTRY_AUTH_FILE", authFile.toAbsolutePath().toString())
                 .remove("XDG_RUNTIME_DIR")
+                .remove("XDG_CONFIG_HOME")
+                .remove("DOCKER_CONFIG")
                 .execute(() -> {
                     new SystemProperties("user.home", homeDir.toAbsolutePath().toString()).execute(() -> {
                         AuthStore authStoreInstance = AuthStore.newStore();
@@ -416,6 +518,8 @@ class AuthStoreTest {
         new EnvironmentVariables()
                 .set("REGISTRY_AUTH_FILE", authFile.toAbsolutePath().toString())
                 .set("XDG_RUNTIME_DIR", xdgRuntimeDir.toAbsolutePath().toString())
+                .remove("XDG_CONFIG_HOME")
+                .remove("DOCKER_CONFIG")
                 .execute(() -> {
                     new SystemProperties("user.home", homeDir.toAbsolutePath().toString()).execute(() -> {
                         AuthStore authStoreInstance = AuthStore.newStore();
